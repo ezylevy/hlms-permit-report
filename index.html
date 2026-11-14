@@ -31,7 +31,7 @@ small{color:#8a9bb0}
   <h1>דוח מיפוי גרמושקה</h1>
   <p>הדוח מוצפן. הקלידו את הסיסמה כדי לפתוח אותו.</p>
   <label for="pw">סיסמה</label>
-  <input id="pw" name="password" type="password" autocomplete="current-password" required autofocus>
+  <input id="pw" name="password" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
   <button id="go" type="submit">פתיחת הדוח</button>
   <div class="msg" id="msg" role="status" aria-live="polite"></div>
   <small>הפענוח נעשה בדפדפן שלכם בלבד. הסיסמה לא נשלחת לשום שרת.</small>
@@ -41,6 +41,14 @@ small{color:#8a9bb0}
 const ITER = 600000;
 const f = document.getElementById("f"), pw = document.getElementById("pw"), go = document.getElementById("go"), msg = document.getElementById("msg");
 let blob = null;
+function loadScript(src){ return new Promise((ok,bad) => { const s=document.createElement("script"); s.src=src; s.onload=ok; s.onerror=()=>bad(new Error("lib")); document.head.appendChild(s); }); }
+async function gunzip(buf){
+  if (window.DecompressionStream) {
+    try { return await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text(); } catch (e) {}
+  }
+  if (!window.pako) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js");
+  return pako.ungzip(new Uint8Array(buf), {to:"string"});
+}
 async function vault(){ if (!blob){ const r = await fetch("vault/report.bin", {cache:"no-cache"}); if(!r.ok) throw new Error("load"); blob = new Uint8Array(await r.arrayBuffer()); } return blob; }
 f.addEventListener("submit", async e => {
   e.preventDefault();
@@ -48,16 +56,21 @@ f.addEventListener("submit", async e => {
   try {
     const b = await vault();
     const salt = b.slice(0,16), iv = b.slice(16,28), ct = b.slice(28);
-    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw.value), "PBKDF2", false, ["deriveKey"]);
+    if (!(window.crypto && crypto.subtle)) throw new Error("crypto");
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw.value.trim()), "PBKDF2", false, ["deriveKey"]);
     const key = await crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:ITER, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["decrypt"]);
     let plain;
     try { plain = await crypto.subtle.decrypt({name:"AES-GCM", iv}, key, ct); }
     catch { throw new Error("pw"); }
-    const html = await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    const html = await gunzip(plain);
     document.open(); document.write(html); document.close();
   } catch (err) {
     go.disabled = false; msg.className = "msg err";
-    msg.textContent = err.message === "pw" ? "הסיסמה שגויה. נסו שוב." : "לא הצלחתי לטעון את הדוח. בדקו את החיבור ונסו שוב.";
+    msg.textContent = {pw:"הסיסמה שגויה. שימו לב לאותיות קטנות באנגלית ונסו שוב.",
+      crypto:"הדפדפן הזה לא תומך בפענוח. פתחו את הקישור ב-Chrome, Edge, Firefox או Safari מעודכן (לא מתוך וואטסאפ או פייסבוק).",
+      lib:"לא הצלחתי לטעון רכיב פענוח. בדקו את החיבור לאינטרנט ונסו שוב.",
+      load:"לא הצלחתי להוריד את הדוח. ייתכן שסינון אינטרנט (כמו נטפרי) חוסם את github.io. בדקו את החיבור ונסו שוב."}[err.message]
+      || ("לא הצלחתי לפתוח את הדוח: " + err.message);
     pw.select();
   }
 });
